@@ -1,10 +1,17 @@
 // Alex Hoang
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:math';
 
 void main() {
-  runApp(const MainApp());
+  runApp(
+    ChangeNotifierProvider(
+      create: (context) => MortgageProvider(),
+      child: const MainApp(),
+    ),
+  );
 }
 
 class MainApp extends StatelessWidget {
@@ -14,7 +21,7 @@ class MainApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return const MaterialApp(
       title: 'Mortgage Calculator V0',
-      home: MortgageScreen(),
+      home: DisplayScreen(),
     );
   }
 }
@@ -77,63 +84,80 @@ List<double> buildRateOptions() {
   return rates;
 }
 
-class MortgageScreen extends StatefulWidget {
-  const MortgageScreen({super.key});
+class MortgageProvider extends ChangeNotifier {
+  static const String amountKey = 'amount';
+  static const String yearsKey = 'years';
+  static const String rateKey = 'rate';
 
-  @override
-  State<MortgageScreen> createState() => _MortgageScreenState();
+  final MortgageCalculator _mortgage = MortgageCalculator();
+  double _ratePercent = 3.5;
+  bool _termsAccepted = false;
+
+  MortgageProvider() {
+    _loadSavedInputs();
+  }
+
+  double get amount => _mortgage.getAmount();
+  int get years => _mortgage.getYears();
+  double get ratePercent => _ratePercent;
+  double get monthlyPayment => _mortgage.calculateMonthlyPayment();
+  double get totalPayment => _mortgage.calculateTotalPayment();
+  bool get termsAccepted => _termsAccepted;
+
+  Future<void> _loadSavedInputs() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    _mortgage.setAmount(prefs.getDouble(amountKey) ?? amount);
+    _mortgage.setYears(prefs.getInt(yearsKey) ?? years);
+    _ratePercent = prefs.getDouble(rateKey) ?? _ratePercent;
+    _mortgage.setRate(_ratePercent);
+    notifyListeners();
+  }
+
+  void setTermsAccepted(bool accepted) {
+    _termsAccepted = accepted;
+    notifyListeners();
+  }
+
+  Future<void> setChanges(double? newAmount, int newYears, double newRatePercent) async {
+    if (newAmount != null) {
+      _mortgage.setAmount(newAmount);
+    }
+    _mortgage.setYears(newYears);
+    _mortgage.setRate(newRatePercent);
+    _ratePercent = newRatePercent;
+    notifyListeners();
+
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(amountKey, amount);
+    await prefs.setInt(yearsKey, years);
+    await prefs.setDouble(rateKey, _ratePercent);
+  }
 }
 
-class _MortgageScreenState extends State<MortgageScreen> {
-  final MortgageCalculator _mortgage = MortgageCalculator();
-  final _amountController = TextEditingController(text: '100000.00');
-  final _rateOptions = buildRateOptions();
-
-  bool _userEditingValues = false;
-  bool _termsAccepted = false;
-  int _selectedYears = 30;
-  double _selectedRate = 3.5;
-
-  @override
-  void dispose() {
-    _amountController.dispose();
-    super.dispose();
-  }
+class DisplayScreen extends StatelessWidget {
+  const DisplayScreen({super.key});
 
   String _money(double value) {
     return '\$${value.toStringAsFixed(2)}';
   }
 
-  void _modify(){
-    setState(() {
-      _userEditingValues = true;
-    });
+  void _modify(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (context) => const EditingScreen()),
+    );
   }
 
-  void _setChanges() {
-    final double? amount = double.tryParse(_amountController.text);
-    if (amount != null) {
-      _mortgage.setAmount(amount);
-    }
-    _mortgage.setYears(_selectedYears);
-    _mortgage.setRate(_selectedRate);
-    setState(() {
-      _userEditingValues = false;
-    });
-  }
-
-  void _userTermsChanged(bool? value) {
+  void _userTermsChanged(BuildContext context, bool? value) {
     if (value == true) {
       _showTermsDialog(context);
     }
     else {
-      setState(() {
-        _termsAccepted = false;
-      });
+      context.read<MortgageProvider>().setTermsAccepted(false);
     }
   }
 
   void _showTermsDialog(BuildContext context) {
+    final MortgageProvider mortgage = context.read<MortgageProvider>();
     showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -143,18 +167,14 @@ class _MortgageScreenState extends State<MortgageScreen> {
           actions: <Widget>[
            TextButton(
               onPressed: () {
-                setState(() {
-                  _termsAccepted = false;
-                });
+                mortgage.setTermsAccepted(false);
                 Navigator.of(context).pop();
               },
               child: const Text('Decline'),
             ),
             TextButton(
               onPressed: () {
-                setState(() {
-                  _termsAccepted = true;
-                });
+                mortgage.setTermsAccepted(true);
                   Navigator.of(context).pop();
               },
               child: const Text('Accept'),
@@ -165,7 +185,7 @@ class _MortgageScreenState extends State<MortgageScreen> {
     );
   }
 
-  Widget _buildDisplayPage() {
+  Widget _buildDisplayPage(BuildContext context, MortgageProvider mortgage) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -177,7 +197,7 @@ class _MortgageScreenState extends State<MortgageScreen> {
                 width: 150,
                 child: Text('Amount:', style: TextStyle(fontSize: 16)),
               ),
-              Text(_money(_mortgage.getAmount())),
+              Text(_money(mortgage.amount)),
             ],
           )
         ),
@@ -189,7 +209,7 @@ class _MortgageScreenState extends State<MortgageScreen> {
                 width: 150,
                 child: Text('Years:', style: TextStyle(fontSize: 16)),
               ),
-              Text('$_selectedYears'),
+              Text('${mortgage.years}'),
             ],
           ),
         ),
@@ -201,7 +221,7 @@ class _MortgageScreenState extends State<MortgageScreen> {
                 width: 150,
                 child: Text('Interest Rate:', style: TextStyle(fontSize: 16)),
               ),
-              Text('$_selectedRate%'),
+              Text('${mortgage.ratePercent}%'),
             ]
           )
 
@@ -215,7 +235,7 @@ class _MortgageScreenState extends State<MortgageScreen> {
                 width: 150,
                 child: Text('Monthly Payment:', style: TextStyle(fontSize: 16)),
               ),
-              Text(_money(_mortgage.calculateMonthlyPayment()), style: const TextStyle(fontSize: 16)),
+              Text(_money(mortgage.monthlyPayment), style: const TextStyle(fontSize: 16)),
             ],
           ),
         ),
@@ -227,24 +247,74 @@ class _MortgageScreenState extends State<MortgageScreen> {
                 width: 150,
                 child: Text('Total Payment:', style: TextStyle(fontSize: 16)),
               ),
-              Text(_money(_mortgage.calculateTotalPayment()), style: const TextStyle(fontSize: 16)),
+              Text(_money(mortgage.totalPayment), style: const TextStyle(fontSize: 16)),
             ],
           ),
         ),
         CheckboxListTile(
           title: const Text('Terms and Conditions', style: TextStyle(fontSize: 16)),
-          value: _termsAccepted,
-          onChanged: _userTermsChanged,
+          value: mortgage.termsAccepted,
+          onChanged: (bool? value) => _userTermsChanged(context, value),
         ),
         const SizedBox(height: 16),
         Center(
           child: ElevatedButton(
-            onPressed: _modify,
+            onPressed: () => _modify(context),
             child: const Text('Modify Data'),
           )
         )
       ]
     );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final MortgageProvider mortgage = context.watch<MortgageProvider>();
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Mortgage Calculator'),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: _buildDisplayPage(context, mortgage),
+      )
+    );
+  }
+
+}
+
+class EditingScreen extends StatefulWidget {
+  const EditingScreen({super.key});
+
+  @override
+  State<EditingScreen> createState() => _EditingScreenState();
+}
+
+class _EditingScreenState extends State<EditingScreen> {
+  final _rateOptions = buildRateOptions();
+  late final TextEditingController _amountController;
+  late int _selectedYears;
+  late double _selectedRate;
+
+  @override
+  void initState() {
+    super.initState();
+    final MortgageProvider mortgage = context.read<MortgageProvider>();
+    _amountController = TextEditingController(text: mortgage.amount.toStringAsFixed(2));
+    _selectedYears = mortgage.years;
+    _selectedRate = mortgage.ratePercent;
+  }
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    super.dispose();
+  }
+
+  void _setChanges() {
+    final double? amount = double.tryParse(_amountController.text);
+    context.read<MortgageProvider>().setChanges(amount, _selectedYears, _selectedRate);
+    Navigator.of(context).pop();
   }
 
   Widget _yearsOptions(int years) {
@@ -357,7 +427,7 @@ class _MortgageScreenState extends State<MortgageScreen> {
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: _userEditingValues ? _buildEditingPage() : _buildDisplayPage(),
+        child: _buildEditingPage(),
       )
     );
   }
